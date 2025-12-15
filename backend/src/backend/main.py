@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
 from .database import create_db_and_tables, get_session, seed_db
-from .models import Conversation
+from .models import Conversation, Message
 
 
 @asynccontextmanager
@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-
+# middleware = "middle layer software that connects different apps, dbs, services"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,6 +28,7 @@ app.add_middleware(
 )
 
 
+# CRUD functions
 @app.post("/conversations/", response_model=Conversation)
 def create_conversation(
     conversation: Conversation, session: Session = Depends(get_session)
@@ -39,32 +40,65 @@ def create_conversation(
 
 
 @app.get("/conversations/", response_model=List[Conversation])
-def read_conversations(
-    offset: int = 0, limit: int = 100, session: Session = Depends(get_session)
-):
-    conversations = session.exec(
-        select(Conversation).offset(offset).limit(limit)
-    ).all()
+def read_conversations(session: Session = Depends(get_session)):
+    conversations = session.exec(select(Conversation)).all()
+
+    # Attach messages
+    for conv in conversations:
+        conv.messages = session.exec(
+            select(Message)
+            .where(Message.conversation_id == conv.id)
+            .order_by(Message.created_at)
+        ).all()
+
     return conversations
 
 
 @app.get("/conversations/{conversation_id}", response_model=Conversation)
-def read_conversation(
-    conversation_id: int, session: Session = Depends(get_session)
-):
+def read_conversation(conversation_id: int, session: Session = Depends(get_session)):
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # Explicitly load messages
+    session.refresh(conversation, ["messages"])
     return conversation
 
 
 @app.delete("/conversations/{conversation_id}")
-def delete_conversation(
-    conversation_id: int, session: Session = Depends(get_session)
-):
+def delete_conversation(conversation_id: int, session: Session = Depends(get_session)):
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     session.delete(conversation)
     session.commit()
     return {"ok": True}
+
+
+# read in the messages
+@app.get("/conversations/{conversation_id}/messages/", response_model=List[Message])
+def read_conversation_messages(
+    conversation_id: int, session: Session = Depends(get_session)
+):
+    conversation = session.get(Conversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    statement = select(Message).where(Message.conversation_id == conversation_id)
+    messages = session.exec(statement).all()
+    return messages
+
+
+@app.post("/conversations/{conversation_id}/messages/", response_model=Message)
+def create_message(
+    conversation_id: int, message: Message, session: Session = Depends(get_session)
+):
+    conversation = session.get(Conversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    message.conversation_id = conversation_id
+    session.add(message)
+    session.commit()
+    session.refresh(message)
+    return message

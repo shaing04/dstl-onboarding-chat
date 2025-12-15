@@ -13,6 +13,7 @@ def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
 
+# seeding db = populating db with initial data
 def seed_db():
     with Session(engine) as session:
         existing_convs = session.exec(select(Conversation)).first()
@@ -22,9 +23,7 @@ def seed_db():
         print("No existing conversations found. Seeding database...")
         # Conversation 1: General greeting
         conv1 = Conversation(title="Welcome Chat")
-        msg1_1 = Message(
-            role="user", content="Hello, who are you?", conversation=conv1
-        )
+        msg1_1 = Message(role="user", content="Hello, who are you?", conversation=conv1)
         msg1_2 = Message(
             role="assistant",
             content="I am an AI assistant here to help you with your onboarding.",
