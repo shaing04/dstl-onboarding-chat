@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from .database import create_db_and_tables, get_session, seed_db
 from .models import Conversation, Message
+from .llm import generate_llm_response  # <--- NRP LLM import
 
 
 @asynccontextmanager
@@ -89,6 +90,9 @@ def read_conversation_messages(
     return messages
 
 
+# -----------------------
+# POST messages + NRP LLM
+# -----------------------
 @app.post("/conversations/{conversation_id}/messages/", response_model=Message)
 def create_message(
     conversation_id: int, message: Message, session: Session = Depends(get_session)
@@ -97,8 +101,43 @@ def create_message(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
+    # Save user's message first
     message.conversation_id = conversation_id
     session.add(message)
     session.commit()
     session.refresh(message)
-    return message
+
+    # Call NRP LLM to generate assistant response
+    try:
+        # Fetch conversation history for LLM context
+        conversation_messages = session.exec(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at)
+        ).all()
+
+        # Format messages for LLM API
+        llm_messages = [
+            {"role": m.role, "content": m.content} for m in conversation_messages
+        ]
+
+        # Generate assistant reply
+        llm_response_content = generate_llm_response(llm_messages)
+
+        # Save assistant response to DB
+        assistant_message = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=llm_response_content,
+        )
+        session.add(assistant_message)
+        session.commit()
+        session.refresh(assistant_message)
+
+        # Return assistant message directly to frontend
+        return assistant_message
+
+    except Exception as e:
+        print(f"LLM error: {e}")
+        # Fallback: return user's message if LLM fails
+        return message

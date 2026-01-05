@@ -31,8 +31,11 @@ const api = {
         conversations.map(async (conv: any) => {
           try {
             const messagesResponse = await fetch(
-              `${import.meta.env.VITE_API_BASE_URL}/conversations/`,
+              `${import.meta.env.VITE_API_BASE_URL}/conversations/${
+                conv.id
+              }/messages/`,
             );
+
             if (messagesResponse.ok) {
               const messages = await messagesResponse.json();
               return { ...conv, messages };
@@ -100,8 +103,11 @@ const api = {
 
     // Get messages
     const messagesResponse = await fetch(
-      `${import.meta.env.VITE_API_BASE_URL}/${conversationId}/messages/`,
+      `${
+        import.meta.env.VITE_API_BASE_URL
+      }/conversations/${conversationId}/messages/`,
     );
+
     const messages = messagesResponse.ok ? await messagesResponse.json() : [];
 
     return { ...conversation, messages };
@@ -158,15 +164,8 @@ function App() {
         setConversations((prev) => [...prev, newConvWithMessage]);
         setActiveConversationId(newConversation.id);
       } catch (error) {
-        console.error('Error creating conversation:', error);
-        // Fallback to frontend-only behavior
-        const fallbackConversation: Conversation = {
-          id: Date.now(),
-          title: `Conversation ${Date.now()}`,
-          messages: [userMessage],
-        };
-        setConversations((prev) => [...prev, fallbackConversation]);
-        setActiveConversationId(fallbackConversation.id);
+        console.error(error);
+        alert('Backend error — check server logs');
       }
     } else {
       try {
@@ -182,15 +181,8 @@ function App() {
           ),
         );
       } catch (error) {
-        console.error('Error adding message:', error);
-        // Fallback to frontend-only behavior
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === activeConversationId
-              ? { ...c, messages: [...c.messages, userMessage] }
-              : c,
-          ),
-        );
+        console.error(error);
+        alert('Backend error — check server logs');
       }
     }
 
@@ -206,21 +198,17 @@ function App() {
   };
 
   const handleConversationClick = async (conversationId: number) => {
-    // If this conversation doesn't have messages loaded, fetch them
-    const conv = conversations.find((c) => c.id === conversationId);
-    if (!conv || !conv.messages || conv.messages.length === 0) {
-      try {
-        const fullConversation = await api.getConversationWithMessages(
-          conversationId,
-        );
-        setConversations((prev) =>
-          prev.map((c) => (c.id === conversationId ? fullConversation : c)),
-        );
-      } catch (error) {
-        console.error('Error loading conversation messages:', error);
-      }
+    try {
+      const fullConversation = await api.getConversationWithMessages(
+        conversationId,
+      );
+      setConversations((prev) =>
+        prev.map((c) => (c.id === conversationId ? fullConversation : c)),
+      );
+      setActiveConversationId(conversationId);
+    } catch (error) {
+      console.error('Error loading conversation messages:', error);
     }
-    setActiveConversationId(conversationId);
   };
 
   return (
