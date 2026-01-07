@@ -70,25 +70,46 @@ const api = {
     return response.json();
   },
 
+  // async addMessageToConversation(
+  //   conversationId: number,
+  //   content: string,
+  //   role: 'user' | 'assistant',
+  // ): Promise<void> {
+  //   await fetch(
+  //     `${
+  //       import.meta.env.VITE_API_BASE_URL
+  //     }/conversations/${conversationId}/messages/`,
+  //     {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify({
+  //         content,
+  //         role,
+  //         conversation_id: conversationId,
+  //       }),
+  //     },
+  //   );
+  // },
+
   async addMessageToConversation(
     conversationId: number,
     content: string,
     role: 'user' | 'assistant',
-  ): Promise<void> {
-    await fetch(
+  ): Promise<{ user_message: Message; assistant_message: Message }> {
+    const response = await fetch(
       `${
         import.meta.env.VITE_API_BASE_URL
       }/conversations/${conversationId}/messages/`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content,
-          role,
-          conversation_id: conversationId,
-        }),
+        body: JSON.stringify({ content, role }),
       },
     );
+
+    if (!response.ok) throw new Error('Failed to add message');
+
+    return response.json();
   },
 
   async getConversationWithMessages(
@@ -143,40 +164,66 @@ function App() {
   const handleSend = async () => {
     if (!input.trim() || isSending) return;
 
-    const userMessage: Message = { role: 'user', content: input };
     setIsSending(true);
 
+    // 1️⃣ Optimistically add user message
+    const tempUserMessage: Message = { role: 'user', content: input };
+    if (activeConversationId !== null) {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConversationId
+            ? { ...c, messages: [...c.messages, tempUserMessage] }
+            : c,
+        ),
+      );
+    }
+
+    const currentInput = input; // save input before clearing
+    setInput('');
+
     if (activeConversationId === null) {
+      // Create new conversation and send message
       try {
-        // Create new conversation in backend
         const newConversation = await api.createConversation(
           `Conversation ${Date.now()}`,
         );
 
-        // Add first message to backend
-        await api.addMessageToConversation(newConversation.id, input, 'user');
+        const response = await api.addMessageToConversation(
+          newConversation.id,
+          currentInput,
+          'user',
+        );
 
-        // Update frontend state
-        const newConvWithMessage = {
-          ...newConversation,
-          messages: [userMessage],
-        };
-        setConversations((prev) => [...prev, newConvWithMessage]);
+        const { assistant_message } = response;
+
+        // Append assistant message to conversation
+        setConversations((prev) => [
+          ...prev,
+          {
+            ...newConversation,
+            messages: [tempUserMessage, assistant_message],
+          },
+        ]);
         setActiveConversationId(newConversation.id);
       } catch (error) {
         console.error(error);
         alert('Backend error — check server logs');
       }
     } else {
+      // Existing conversation
       try {
-        // Add message to backend
-        await api.addMessageToConversation(activeConversationId, input, 'user');
+        const response = await api.addMessageToConversation(
+          activeConversationId,
+          currentInput,
+          'user',
+        );
 
-        // Update frontend state
+        const { assistant_message } = response;
+
         setConversations((prev) =>
           prev.map((c) =>
             c.id === activeConversationId
-              ? { ...c, messages: [...c.messages, userMessage] }
+              ? { ...c, messages: [...c.messages, assistant_message] }
               : c,
           ),
         );
@@ -186,7 +233,6 @@ function App() {
       }
     }
 
-    setInput('');
     setIsSending(false);
   };
 

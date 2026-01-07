@@ -5,9 +5,14 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
+
+from typing import Dict
+
+from .llm import generate_llm_response
+
+
 from .database import create_db_and_tables, get_session, seed_db
 from .models import Conversation, Message
-from .llm import generate_llm_response  # <--- NRP LLM import
 
 
 @asynccontextmanager
@@ -90,54 +95,63 @@ def read_conversation_messages(
     return messages
 
 
-# -----------------------
-# POST messages + NRP LLM
-# -----------------------
-@app.post("/conversations/{conversation_id}/messages/", response_model=Message)
+# @app.post("/conversations/{conversation_id}/messages/", response_model=Message)
+# def create_message(
+#     conversation_id: int, message: Message, session: Session = Depends(get_session)
+# ):
+#     conversation = session.get(Conversation, conversation_id)
+#     if not conversation:
+#         raise HTTPException(status_code=404, detail="Conversation not found")
+
+#     message.conversation_id = conversation_id
+#     session.add(message)
+#     session.commit()
+#     session.refresh(message)
+#     return message
+
+
+@app.post("/conversations/{conversation_id}/messages/")
 def create_message(
     conversation_id: int, message: Message, session: Session = Depends(get_session)
-):
+) -> Dict[str, Message]:
+
+    # Step 1: Validate conversation exists
     conversation = session.get(Conversation, conversation_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # Save user's message first
+    # Step 2: Save USER message first
+    message.role = "user"
     message.conversation_id = conversation_id
+
     session.add(message)
     session.commit()
     session.refresh(message)
 
-    # Call NRP LLM to generate assistant response
+    # Step 3: Collect FULL conversation history from DB
+    messages = session.exec(
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at)
+    ).all()
+
+    # Step 4: Convert to LLM API format
+    history = [{"role": m.role, "content": m.content} for m in messages]
+
+    # Step 5: Call LLM API
     try:
-        # Fetch conversation history for LLM context
-        conversation_messages = session.exec(
-            select(Message)
-            .where(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at)
-        ).all()
-
-        # Format messages for LLM API
-        llm_messages = [
-            {"role": m.role, "content": m.content} for m in conversation_messages
-        ]
-
-        # Generate assistant reply
-        llm_response_content = generate_llm_response(llm_messages)
-
-        # Save assistant response to DB
-        assistant_message = Message(
-            conversation_id=conversation_id,
-            role="assistant",
-            content=llm_response_content,
-        )
-        session.add(assistant_message)
-        session.commit()
-        session.refresh(assistant_message)
-
-        # Return assistant message directly to frontend
-        return assistant_message
-
+        assistant_text = generate_llm_response(history)
     except Exception as e:
-        print(f"LLM error: {e}")
-        # Fallback: return user's message if LLM fails
-        return message
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Step 6: Save ASSISTANT reply
+    assistant_message = Message(
+        role="assistant", content=assistant_text, conversation_id=conversation_id
+    )
+
+    session.add(assistant_message)
+    session.commit()
+    session.refresh(assistant_message)
+
+    # Step 7: Return both
+    return {"user_message": message, "assistant_message": assistant_message}
