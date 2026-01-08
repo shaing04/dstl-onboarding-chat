@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 type Message = {
   id?: number;
@@ -166,7 +168,6 @@ function App() {
 
     setIsSending(true);
 
-    // 1️⃣ Optimistically add user message
     const tempUserMessage: Message = { role: 'user', content: input };
     if (activeConversationId !== null) {
       setConversations((prev) =>
@@ -310,7 +311,26 @@ function App() {
                       : 'bg-white border border-gray-200 text-gray-800'
                   }`}
                 >
-                  {msg.content}
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      code({ className, children }) {
+                        const isBlock = className?.startsWith('language-');
+
+                        return isBlock ? (
+                          <pre className="bg-gray-900 text-white p-3 rounded overflow-x-auto">
+                            <code>{children}</code>
+                          </pre>
+                        ) : (
+                          <code className="bg-gray-200 px-1 rounded">
+                            {children}
+                          </code>
+                        );
+                      },
+                    }}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
                 </div>
               </div>
             ))}
